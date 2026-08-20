@@ -5,3 +5,7 @@ Bot Telegram untuk menganalisis pasar kripto dan memberikan peringatan berdasark
 ## Status
 
 Repository baru dibuat dan siap dikembangkan.
+
+## Uji Akses Tulis
+
+Akses tulis GitHub berhasil diuji melalui pembaruan README ini pada 20 Agustus 2026.
