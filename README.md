@@ -1,6 +1,6 @@
 # Analisa Crypto Bot
 
-Cloudflare Worker + Telegram bot untuk membaca market crypto dan nantinya menggabungkan berita, data makro, derivatives, serta AI untuk memberi peringatan bullish/bearish.
+Cloudflare Worker + Telegram bot untuk membaca market crypto, data makro, derivatives, berita, dan nantinya AI untuk memberi peringatan bullish/bearish.
 
 ## Fitur aktif
 
@@ -14,11 +14,11 @@ Cloudflare Worker + Telegram bot untuk membaca market crypto dan nantinya mengga
 - `/binance BTCUSDT` untuk tes Binance Public Market API
 - `/finnhub` untuk tes Finnhub Economic Calendar
 - `/macro` untuk membaca event makro AS penting hari ini + besok
+- `/coinalyze BTC` untuk tes Coinalyze dan memilih market futures perpetual
+- `/derivatives BTC` untuk Open Interest, Funding Rate, liquidations 24 jam, dan long/short ratio
 - Filter event seperti CPI/inflasi, PCE, NFP/payroll, unemployment/jobless, FOMC/Fed, rate decision, GDP, retail sales, PPI, ISM dan JOLTS
 - Data harga publik dari MEXC dan Binance tanpa memerlukan private API key
-- Binance memakai `data-api.binance.vision` dengan fallback `api.binance.com`
 - Jika `TELEGRAM_CHAT_ID` diisi, hanya chat tersebut yang dapat memakai bot
-- Secret Telegram webhook opsional
 
 ## Deploy
 
@@ -34,8 +34,6 @@ npx wrangler deploy
 
 Jangan commit API key ke repository.
 
-Tambahkan di Cloudflare Worker > Settings > Variables and Secrets:
-
 ```text
 TELEGRAM_BOT_TOKEN
 TELEGRAM_CHAT_ID
@@ -45,63 +43,41 @@ MEXC_API_KEY
 MEXC_API_SECRET
 
 FINNHUB_API_KEY
+COINALYZE_API_KEY
 YOU_API_KEY
 XAI_API_KEY
-COINGLASS_API_KEY
 FRED_API_KEY
-NEWS_API_KEY
 ```
 
-Untuk MEXC:
+Binance market data yang dipakai bot adalah public API sehingga tidak memerlukan `BINANCE_API_KEY` atau `BINANCE_API_SECRET`.
 
-```text
-MEXC_API_KEY = Access Key
-MEXC_API_SECRET = Secret Key
-```
+`COINALYZE_API_KEY` dipakai untuk futures/derivatives. Bot memilih perpetual USDT yang paling sesuai dan memprioritaskan market Binance bila tersedia.
 
-Binance market data yang dipakai bot saat ini adalah public API, sehingga tidak memerlukan `BINANCE_API_KEY` maupun `BINANCE_API_SECRET`.
+## Telegram
 
-`FINNHUB_API_KEY` dipakai untuk Economic Calendar. Jika paket Finnhub tidak mengizinkan endpoint kalender ekonomi, `/finnhub` atau `/macro` akan menampilkan pesan error dari Finnhub.
-
-Bot saat ini hanya memakai private MEXC API untuk tes baca akun melalui `/mexc`. Kode tidak memiliki fungsi memasang order, withdraw, atau transfer.
-
-## Menghubungkan webhook Telegram
-
-Setelah Worker berhasil deploy, buka sekali:
+Setelah deploy, buka sekali:
 
 ```text
 https://<worker-domain>/setup-webhook
 ```
 
-Worker akan memanggil Telegram `setWebhook` dan mengarahkan update ke:
-
-```text
-https://<worker-domain>/telegram
-```
-
-Kemudian buka bot Telegram dan kirim:
+Kemudian tes:
 
 ```text
 /start
 /status
+/price BTCUSDT
 /mexc
 /binance BTCUSDT
 /finnhub
 /macro
-/price BTCUSDT
+/coinalyze BTC
+/derivatives BTC
 ```
-
-Jika `/mexc` menampilkan `MEXC API TERHUBUNG`, Access Key dan Secret Key berhasil dipakai.
-
-Jika `/binance BTCUSDT` menampilkan `BINANCE PUBLIC API TERHUBUNG`, Binance market data sudah aktif tanpa API key.
-
-Jika `/finnhub` menampilkan `FINNHUB API TERHUBUNG`, key Finnhub berhasil dibaca dan Economic Calendar dapat diakses oleh paket akun tersebut.
-
-`/macro` menampilkan event ekonomi AS penting beserta previous, estimate, actual, impact, dan waktu yang diberikan Finnhub. Penilaian bullish/bearish belum diaktifkan sampai mesin AI dihubungkan.
 
 ## Keamanan
 
-- Jangan aktifkan permission Withdraw/Transfer/Order Placing pada exchange untuk bot analisa.
+- Jangan aktifkan Withdraw/Transfer/Order Placing pada exchange untuk bot analisa.
 - Semua API key rahasia disimpan sebagai Cloudflare Secret.
 - `TELEGRAM_CHAT_ID` membatasi kontrol bot ke chat yang dikonfigurasi.
-- Output analisa nantinya bersifat probabilistik, bukan jaminan harga akan naik atau turun.
+- Bias derivatives adalah sinyal awal berbasis data, bukan prediksi pasti atau nasihat keuangan.
