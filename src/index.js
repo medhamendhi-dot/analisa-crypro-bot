@@ -1,4 +1,6 @@
 const MEXC_BASE = "https://api.mexc.com/api/v3";
+const BINANCE_BASE = "https://data-api.binance.vision/api/v3";
+const BINANCE_FALLBACK_BASE = "https://api.binance.com/api/v3";
 
 export default {
   async fetch(request, env) {
@@ -11,13 +13,13 @@ export default {
         runtime: "cloudflare-workers",
         telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
         mexcConfigured: Boolean(env.MEXC_API_KEY && env.MEXC_API_SECRET),
+        binancePublicApi: true,
         xaiConfigured: Boolean(env.XAI_API_KEY),
         newsConfigured: Boolean(env.NEWS_API_KEY),
       });
     }
 
     // One-time helper: open https://YOUR-WORKER/setup-webhook after deploy.
-    // It only points Telegram to this same Worker; the bot token is never returned.
     if (request.method === "GET" && url.pathname === "/setup-webhook") {
       try {
         const result = await setupTelegramWebhook(env, url.origin);
@@ -64,10 +66,11 @@ async function handleTelegramUpdate(update, env) {
   if (command === "/start") {
     return sendTelegram(env, chatId,
       "🤖 <b>Analisa Crypto Bot</b>\n\n" +
-      "Telegram dan MEXC sudah terhubung melalui Cloudflare Worker.\n\n" +
+      "Telegram, MEXC, dan Binance market data sudah terhubung melalui Cloudflare Worker.\n\n" +
       "Perintah:\n" +
-      "• /price BTCUSDT — harga, perubahan & volume 24 jam\n" +
+      "• /price BTCUSDT — bandingkan harga MEXC + Binance\n" +
       "• /mexc — tes koneksi API privat MEXC\n" +
+      "• /binance BTCUSDT — tes Binance public API\n" +
       "• /status — status konfigurasi API\n\n" +
       "⚠️ Analisa bukan jaminan keuntungan dan bukan nasihat keuangan."
     );
@@ -79,13 +82,14 @@ async function handleTelegramUpdate(update, env) {
       `Telegram Bot: ${yesNo(env.TELEGRAM_BOT_TOKEN)}`,
       `Telegram Chat ID: ${yesNo(env.TELEGRAM_CHAT_ID)}`,
       `MEXC API: ${yesNo(env.MEXC_API_KEY && env.MEXC_API_SECRET)}`,
+      "Binance Public API: ✅ tanpa API key",
       `xAI: ${yesNo(env.XAI_API_KEY)}`,
       `News API: ${yesNo(env.NEWS_API_KEY)}`,
       `Trading Economics: ${yesNo(env.TRADING_ECONOMICS_API_KEY)}`,
       `CoinGlass: ${yesNo(env.COINGLASS_API_KEY)}`,
       `FRED: ${yesNo(env.FRED_API_KEY)}`,
       "",
-      "MEXC public market data dapat digunakan tanpa API key.",
+      "MEXC dan Binance public market data dapat digunakan tanpa API key.",
     ];
     return sendTelegram(env, chatId, lines.join("\n"));
   }
@@ -110,31 +114,100 @@ async function handleTelegramUpdate(update, env) {
     }
   }
 
-  if (command === "/price") {
+  if (command === "/binance") {
     const symbol = normalizeSymbol(rawSymbol || "BTCUSDT");
     try {
-      const ticker = await getMexcTicker(symbol);
+      const ticker = await getBinanceTicker(symbol);
       const price = Number(ticker.lastPrice);
       const change = Number(ticker.priceChangePercent);
       const volume = Number(ticker.quoteVolume);
       const arrow = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
 
       return sendTelegram(env, chatId,
+        "✅ <b>BINANCE PUBLIC API TERHUBUNG</b>\n\n" +
         `📊 <b>${escapeHtml(symbol)}</b>\n` +
         `Harga: <b>${formatNumber(price)}</b> USDT\n` +
         `${arrow} 24 jam: <b>${formatSigned(change)}%</b>\n` +
         `Volume quote 24j: ${formatCompact(volume)} USDT\n\n` +
-        "Sumber: MEXC public market data"
+        "Tidak memakai Binance API key."
       );
     } catch (error) {
       return sendTelegram(env, chatId,
-        `❌ Gagal mengambil ${escapeHtml(symbol)} dari MEXC: ${escapeHtml(error.message)}`
+        `❌ <b>Binance API gagal</b>\n${escapeHtml(cleanApiError(error.message))}`
       );
     }
   }
 
+  if (command === "/price") {
+    const symbol = normalizeSymbol(rawSymbol || "BTCUSDT");
+
+    const [mexcResult, binanceResult] = await Promise.allSettled([
+      getMexcTicker(symbol),
+      getBinanceTicker(symbol),
+    ]);
+
+    if (mexcResult.status === "rejected" && binanceResult.status === "rejected") {
+      return sendTelegram(env, chatId,
+        `❌ Gagal mengambil ${escapeHtml(symbol)} dari MEXC dan Binance.\n` +
+        `MEXC: ${escapeHtml(cleanApiError(mexcResult.reason?.message))}\n` +
+        `Binance: ${escapeHtml(cleanApiError(binanceResult.reason?.message))}`
+      );
+    }
+
+    const lines = [`📊 <b>${escapeHtml(symbol)}</b>`];
+    let mexcPrice = null;
+    let binancePrice = null;
+
+    if (mexcResult.status === "fulfilled") {
+      const ticker = mexcResult.value;
+      mexcPrice = Number(ticker.lastPrice);
+      const change = Number(ticker.priceChangePercent);
+      const volume = Number(ticker.quoteVolume);
+      const arrow = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
+      lines.push(
+        "",
+        "<b>MEXC</b>",
+        `Harga: <b>${formatNumber(mexcPrice)}</b> USDT`,
+        `${arrow} 24 jam: <b>${formatSigned(change)}%</b>`,
+        `Volume: ${formatCompact(volume)} USDT`
+      );
+    } else {
+      lines.push("", `<b>MEXC</b>: ❌ ${escapeHtml(cleanApiError(mexcResult.reason?.message))}`);
+    }
+
+    if (binanceResult.status === "fulfilled") {
+      const ticker = binanceResult.value;
+      binancePrice = Number(ticker.lastPrice);
+      const change = Number(ticker.priceChangePercent);
+      const volume = Number(ticker.quoteVolume);
+      const arrow = change > 0 ? "🟢" : change < 0 ? "🔴" : "⚪";
+      lines.push(
+        "",
+        "<b>BINANCE</b>",
+        `Harga: <b>${formatNumber(binancePrice)}</b> USDT`,
+        `${arrow} 24 jam: <b>${formatSigned(change)}%</b>`,
+        `Volume: ${formatCompact(volume)} USDT`
+      );
+    } else {
+      lines.push("", `<b>BINANCE</b>: ❌ ${escapeHtml(cleanApiError(binanceResult.reason?.message))}`);
+    }
+
+    if (Number.isFinite(mexcPrice) && Number.isFinite(binancePrice) && binancePrice !== 0) {
+      const difference = mexcPrice - binancePrice;
+      const differencePct = (difference / binancePrice) * 100;
+      lines.push(
+        "",
+        `<b>Selisih MEXC vs Binance:</b> ${formatSigned(differencePct)}%`,
+        `Selisih harga: ${difference > 0 ? "+" : ""}${formatNumber(difference)} USDT`
+      );
+    }
+
+    lines.push("", "Sumber: MEXC + Binance public market data");
+    return sendTelegram(env, chatId, lines.join("\n"));
+  }
+
   return sendTelegram(env, chatId,
-    "Perintah belum dikenal. Gunakan /start, /price BTCUSDT, /mexc, atau /status."
+    "Perintah belum dikenal. Gunakan /start, /price BTCUSDT, /mexc, /binance BTCUSDT, atau /status."
   );
 }
 
@@ -174,6 +247,30 @@ async function getMexcTicker(symbol) {
   const data = await response.json();
   if (!data?.lastPrice) throw new Error("Ticker tidak ditemukan");
   return data;
+}
+
+async function getBinanceTicker(symbol) {
+  const bases = [BINANCE_BASE, BINANCE_FALLBACK_BASE];
+  let lastError = null;
+
+  for (const base of bases) {
+    try {
+      const response = await fetch(`${base}/ticker/24hr?symbol=${encodeURIComponent(symbol)}`, {
+        headers: { accept: "application/json" },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.msg || `Binance HTTP ${response.status}`);
+      }
+      if (!data?.lastPrice) throw new Error("Ticker Binance tidak ditemukan");
+      return data;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Binance public API tidak tersedia");
 }
 
 async function getMexcAccount(env) {
@@ -247,8 +344,9 @@ function yesNo(value) {
 
 function formatNumber(value) {
   if (!Number.isFinite(value)) return "-";
-  if (value >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  if (value >= 1) return value.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  const abs = Math.abs(value);
+  if (abs >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (abs >= 1) return value.toLocaleString("en-US", { maximumFractionDigits: 6 });
   return value.toLocaleString("en-US", { maximumFractionDigits: 10 });
 }
 
