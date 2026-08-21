@@ -1,6 +1,6 @@
 import router from "./router.js";
 
-const BUILD_VERSION = "2026-08-21-botfather-commands-v1";
+const BUILD_VERSION = "2026-08-21-botfather-commands-v2";
 
 export default {
   async fetch(request, env, ctx) {
@@ -41,7 +41,7 @@ export default {
         "Command utama:\n" +
         "• /analyzebtc — analisa BTC lengkap\n" +
         "• /newsbtc — berita crypto/BTC terbaru\n\n" +
-        "Bot menggabungkan market, derivatives, macro, berita, dan xAI untuk analisa probabilistik.\n\n" +
+        "Analisa BTC memakai market, derivatives, teknikal Twelve Data, macro, berita, dan xAI.\n\n" +
         "⚠️ Analisa bukan jaminan keuntungan atau nasihat keuangan."
       );
       return json({ ok: true });
