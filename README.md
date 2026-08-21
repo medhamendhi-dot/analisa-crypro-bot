@@ -9,9 +9,11 @@ Cloudflare Worker + Telegram bot untuk membaca market crypto dan nantinya mengga
 - Helper setup webhook: `GET /setup-webhook`
 - `/start`
 - `/status`
-- `/price BTCUSDT`
+- `/price BTCUSDT` membandingkan harga MEXC + Binance
 - `/mexc` untuk tes private read-only MEXC API
-- Data harga publik dari MEXC tanpa memerlukan private API key
+- `/binance BTCUSDT` untuk tes Binance Public Market API
+- Data harga publik dari MEXC dan Binance tanpa memerlukan private API key
+- Binance memakai `data-api.binance.vision` dengan fallback `api.binance.com`
 - Jika `TELEGRAM_CHAT_ID` diisi, hanya chat tersebut yang dapat memakai bot
 - Secret Telegram webhook opsional
 
@@ -53,6 +55,8 @@ MEXC_API_KEY = Access Key
 MEXC_API_SECRET = Secret Key
 ```
 
+Binance market data yang dipakai bot saat ini adalah public API, sehingga tidak memerlukan `BINANCE_API_KEY` maupun `BINANCE_API_SECRET`.
+
 Bot saat ini hanya memakai private MEXC API untuk tes baca akun melalui `/mexc`. Kode tidak memiliki fungsi memasang order, withdraw, atau transfer.
 
 ## Menghubungkan webhook Telegram
@@ -75,10 +79,13 @@ Kemudian buka bot Telegram dan kirim:
 /start
 /status
 /mexc
+/binance BTCUSDT
 /price BTCUSDT
 ```
 
 Jika `/mexc` menampilkan `MEXC API TERHUBUNG`, Access Key dan Secret Key berhasil dipakai.
+
+Jika `/binance BTCUSDT` menampilkan `BINANCE PUBLIC API TERHUBUNG`, Binance market data sudah aktif tanpa API key.
 
 ## Keamanan
 
