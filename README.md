@@ -2,14 +2,17 @@
 
 Cloudflare Worker + Telegram bot untuk membaca market crypto dan nantinya menggabungkan berita, data makro, derivatives, serta AI untuk memberi peringatan bullish/bearish.
 
-## Fitur awal
+## Fitur aktif
 
 - Endpoint health check: `/` dan `/health`
 - Webhook Telegram: `POST /telegram`
+- Helper setup webhook: `GET /setup-webhook`
 - `/start`
 - `/status`
 - `/price BTCUSDT`
+- `/mexc` untuk tes private read-only MEXC API
 - Data harga publik dari MEXC tanpa memerlukan private API key
+- Jika `TELEGRAM_CHAT_ID` diisi, hanya chat tersebut yang dapat memakai bot
 - Secret Telegram webhook opsional
 
 ## Deploy
@@ -43,20 +46,43 @@ COINGLASS_API_KEY
 FRED_API_KEY
 ```
 
-`MEXC_API_KEY` dan `MEXC_API_SECRET` belum dibutuhkan untuk endpoint market publik saat ini. Simpan hanya bila nanti fitur akun privat benar-benar diperlukan.
+Untuk MEXC:
 
-## Set webhook Telegram
+```text
+MEXC_API_KEY = Access Key
+MEXC_API_SECRET = Secret Key
+```
 
-Setelah Worker berhasil deploy dan mendapat URL, webhook diarahkan ke:
+Bot saat ini hanya memakai private MEXC API untuk tes baca akun melalui `/mexc`. Kode tidak memiliki fungsi memasang order, withdraw, atau transfer.
+
+## Menghubungkan webhook Telegram
+
+Setelah Worker berhasil deploy, buka sekali:
+
+```text
+https://<worker-domain>/setup-webhook
+```
+
+Worker akan memanggil Telegram `setWebhook` dan mengarahkan update ke:
 
 ```text
 https://<worker-domain>/telegram
 ```
 
-Jika memakai `TELEGRAM_WEBHOOK_SECRET`, gunakan nilai secret yang sama saat memanggil `setWebhook` Telegram agar request webhook dapat diverifikasi.
+Kemudian buka bot Telegram dan kirim:
+
+```text
+/start
+/status
+/mexc
+/price BTCUSDT
+```
+
+Jika `/mexc` menampilkan `MEXC API TERHUBUNG`, Access Key dan Secret Key berhasil dipakai.
 
 ## Keamanan
 
 - Jangan aktifkan permission Withdraw/Transfer/Order Placing pada exchange untuk bot analisa.
 - Semua API key rahasia disimpan sebagai Cloudflare Secret.
+- `TELEGRAM_CHAT_ID` membatasi kontrol bot ke chat yang dikonfigurasi.
 - Output analisa nantinya bersifat probabilistik, bukan jaminan harga akan naik atau turun.
