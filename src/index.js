@@ -1,6 +1,7 @@
 const MEXC_BASE = "https://api.mexc.com/api/v3";
 const BINANCE_BASE = "https://data-api.binance.vision/api/v3";
 const BINANCE_FALLBACK_BASE = "https://api.binance.com/api/v3";
+const FINNHUB_BASE = "https://finnhub.io/api/v1";
 
 export default {
   async fetch(request, env) {
@@ -14,6 +15,8 @@ export default {
         telegramConfigured: Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
         mexcConfigured: Boolean(env.MEXC_API_KEY && env.MEXC_API_SECRET),
         binancePublicApi: true,
+        finnhubConfigured: Boolean(env.FINNHUB_API_KEY),
+        youConfigured: Boolean(env.YOU_API_KEY),
         xaiConfigured: Boolean(env.XAI_API_KEY),
         newsConfigured: Boolean(env.NEWS_API_KEY),
       });
@@ -66,11 +69,13 @@ async function handleTelegramUpdate(update, env) {
   if (command === "/start") {
     return sendTelegram(env, chatId,
       "🤖 <b>Analisa Crypto Bot</b>\n\n" +
-      "Telegram, MEXC, dan Binance market data sudah terhubung melalui Cloudflare Worker.\n\n" +
+      "Telegram, MEXC, Binance, dan Finnhub sudah didukung melalui Cloudflare Worker.\n\n" +
       "Perintah:\n" +
       "• /price BTCUSDT — bandingkan harga MEXC + Binance\n" +
       "• /mexc — tes koneksi API privat MEXC\n" +
       "• /binance BTCUSDT — tes Binance public API\n" +
+      "• /finnhub — tes Finnhub Economic Calendar\n" +
+      "• /macro — event makro AS penting hari ini + besok\n" +
       "• /status — status konfigurasi API\n\n" +
       "⚠️ Analisa bukan jaminan keuntungan dan bukan nasihat keuangan."
     );
@@ -83,9 +88,10 @@ async function handleTelegramUpdate(update, env) {
       `Telegram Chat ID: ${yesNo(env.TELEGRAM_CHAT_ID)}`,
       `MEXC API: ${yesNo(env.MEXC_API_KEY && env.MEXC_API_SECRET)}`,
       "Binance Public API: ✅ tanpa API key",
+      `Finnhub: ${yesNo(env.FINNHUB_API_KEY)}`,
+      `You.com: ${yesNo(env.YOU_API_KEY)}`,
       `xAI: ${yesNo(env.XAI_API_KEY)}`,
       `News API: ${yesNo(env.NEWS_API_KEY)}`,
-      `Trading Economics: ${yesNo(env.TRADING_ECONOMICS_API_KEY)}`,
       `CoinGlass: ${yesNo(env.COINGLASS_API_KEY)}`,
       `FRED: ${yesNo(env.FRED_API_KEY)}`,
       "",
@@ -134,6 +140,77 @@ async function handleTelegramUpdate(update, env) {
     } catch (error) {
       return sendTelegram(env, chatId,
         `❌ <b>Binance API gagal</b>\n${escapeHtml(cleanApiError(error.message))}`
+      );
+    }
+  }
+
+  if (command === "/finnhub") {
+    try {
+      const { from, to } = getDateRangeUtc(0, 1);
+      const events = await getFinnhubEconomicCalendar(env, from, to);
+      const usEvents = events.filter(isUnitedStatesEvent);
+      const important = usEvents.filter(isImportantMacroEvent);
+
+      return sendTelegram(env, chatId,
+        "✅ <b>FINNHUB API TERHUBUNG</b>\n\n" +
+        `Periode tes: ${from} s/d ${to}\n` +
+        `Semua event: ${events.length}\n` +
+        `Event AS: ${usEvents.length}\n` +
+        `Event AS penting: ${important.length}\n\n` +
+        "Gunakan /macro untuk melihat CPI, FOMC/Fed, NFP/jobs, PCE, GDP, retail sales dan event penting lain."
+      );
+    } catch (error) {
+      return sendTelegram(env, chatId,
+        `❌ <b>Finnhub API gagal</b>\n${escapeHtml(cleanApiError(error.message))}`
+      );
+    }
+  }
+
+  if (command === "/macro") {
+    try {
+      const { from, to } = getDateRangeUtc(0, 1);
+      const events = await getFinnhubEconomicCalendar(env, from, to);
+      const important = events
+        .filter(isUnitedStatesEvent)
+        .filter(isImportantMacroEvent)
+        .sort(sortEconomicEvents)
+        .slice(0, 12);
+
+      if (important.length === 0) {
+        return sendTelegram(env, chatId,
+          `📅 <b>MACRO AS</b>\n\nTidak ada event utama yang terdeteksi untuk ${from} s/d ${to}.\n\nSumber: Finnhub Economic Calendar.`
+        );
+      }
+
+      const lines = [
+        "📅 <b>MACRO AS — EVENT PENTING</b>",
+        `Periode: ${from} s/d ${to}`,
+        "",
+      ];
+
+      important.forEach((event, index) => {
+        const impact = formatImpact(event.impact);
+        const unit = event.unit ? ` ${event.unit}` : "";
+        lines.push(
+          `<b>${index + 1}. ${escapeHtml(event.event || "Economic event")}</b>`,
+          `Waktu: ${escapeHtml(formatFinnhubTime(event.time))}`,
+          `Impact: ${impact}`,
+          `Previous: ${formatMacroValue(event.prev, unit)}`,
+          `Estimate: ${formatMacroValue(event.estimate, unit)}`,
+          `Actual: ${formatMacroValue(event.actual, unit)}`,
+          ""
+        );
+      });
+
+      lines.push(
+        "Sumber: Finnhub Economic Calendar.",
+        "Bot belum memberi prediksi bullish/bearish dari data ini sampai mesin AI dihubungkan."
+      );
+
+      return sendTelegram(env, chatId, lines.join("\n"));
+    } catch (error) {
+      return sendTelegram(env, chatId,
+        `❌ <b>Gagal membaca kalender makro</b>\n${escapeHtml(cleanApiError(error.message))}`
       );
     }
   }
@@ -207,7 +284,7 @@ async function handleTelegramUpdate(update, env) {
   }
 
   return sendTelegram(env, chatId,
-    "Perintah belum dikenal. Gunakan /start, /price BTCUSDT, /mexc, /binance BTCUSDT, atau /status."
+    "Perintah belum dikenal. Gunakan /start, /price BTCUSDT, /mexc, /binance BTCUSDT, /finnhub, /macro, atau /status."
   );
 }
 
@@ -273,6 +350,42 @@ async function getBinanceTicker(symbol) {
   throw lastError || new Error("Binance public API tidak tersedia");
 }
 
+async function getFinnhubEconomicCalendar(env, from, to) {
+  if (!env.FINNHUB_API_KEY) {
+    throw new Error("FINNHUB_API_KEY belum dikonfigurasi");
+  }
+
+  const url = new URL(`${FINNHUB_BASE}/calendar/economic`);
+  url.searchParams.set("from", from);
+  url.searchParams.set("to", to);
+  url.searchParams.set("token", env.FINNHUB_API_KEY);
+
+  const response = await fetch(url.toString(), {
+    headers: { accept: "application/json" },
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data?.error || data?.message || `Finnhub HTTP ${response.status}`);
+  }
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  const events = Array.isArray(data?.economicCalendar)
+    ? data.economicCalendar
+    : Array.isArray(data)
+      ? data
+      : [];
+
+  if (!Array.isArray(events)) {
+    throw new Error("Format economic calendar Finnhub tidak dikenali");
+  }
+
+  return events;
+}
+
 async function getMexcAccount(env) {
   if (!env.MEXC_API_KEY || !env.MEXC_API_SECRET) {
     throw new Error("MEXC_API_KEY atau MEXC_API_SECRET belum dikonfigurasi");
@@ -329,6 +442,75 @@ async function sendTelegram(env, chatId, text) {
     const body = await response.text();
     throw new Error(`Telegram HTTP ${response.status}: ${body.slice(0, 200)}`);
   }
+}
+
+function isUnitedStatesEvent(event) {
+  const country = String(event?.country || "").trim().toUpperCase();
+  return country === "US" || country === "USA" || country === "UNITED STATES";
+}
+
+function isImportantMacroEvent(event) {
+  const name = String(event?.event || "").toLowerCase();
+  const importantName = /(cpi|consumer price|core inflation|inflation|pce|personal consumption|nonfarm|non-farm|payroll|employment change|unemployment|jobless|fomc|fed funds|federal reserve|interest rate|rate decision|powell|gdp|retail sales|ppi|producer price|ism|jolts|consumer confidence)/i.test(name);
+  const impact = normalizeImpact(event?.impact);
+  return importantName || impact >= 3;
+}
+
+function normalizeImpact(value) {
+  if (typeof value === "number") return value;
+  const text = String(value || "").toLowerCase();
+  if (text.includes("high")) return 3;
+  if (text.includes("medium")) return 2;
+  if (text.includes("low")) return 1;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function formatImpact(value) {
+  const impact = normalizeImpact(value);
+  if (impact >= 3) return "🔴 HIGH";
+  if (impact >= 2) return "🟠 MEDIUM";
+  if (impact >= 1) return "🟡 LOW";
+  return "⚪ -";
+}
+
+function sortEconomicEvents(a, b) {
+  return getEventTimestamp(a?.time) - getEventTimestamp(b?.time);
+}
+
+function getEventTimestamp(value) {
+  if (typeof value === "number") return value > 1e12 ? value : value * 1000;
+  const raw = String(value || "").trim();
+  if (!raw) return Number.MAX_SAFE_INTEGER;
+  const parsed = Date.parse(raw.includes("T") ? raw : raw.replace(" ", "T") + "Z");
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+}
+
+function formatFinnhubTime(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "number") {
+    const ms = value > 1e12 ? value : value * 1000;
+    const date = new Date(ms);
+    if (!Number.isNaN(date.getTime())) return `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  }
+  return String(value);
+}
+
+function formatMacroValue(value, unit = "") {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "number") return `${formatNumber(value)}${unit}`;
+  const text = String(value).trim();
+  return text ? `${escapeHtml(text)}${unit}` : "-";
+}
+
+function getDateRangeUtc(startOffsetDays = 0, endOffsetDays = 1) {
+  const now = new Date();
+  const fromDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + startOffsetDays));
+  const toDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + endOffsetDays));
+  return {
+    from: fromDate.toISOString().slice(0, 10),
+    to: toDate.toISOString().slice(0, 10),
+  };
 }
 
 function normalizeSymbol(input) {
