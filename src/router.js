@@ -1,6 +1,7 @@
 import app from "./app.js";
+import { getFinnhubStatusText, getMacroFallbackText } from "./macro-fallback.js";
 
-const BUILD_VERSION = "2026-08-21-binance-fallback-v1";
+const BUILD_VERSION = "2026-08-21-macro-fallback-v2";
 const MEXC_BASE = "https://api.mexc.com/api/v3";
 const BINANCE_BASES = [
   "https://data-api.binance.vision/api/v3",
@@ -29,7 +30,7 @@ export default {
       const [rawCommand, rawArg] = text.split(/\s+/);
       const command = String(rawCommand || "").toLowerCase().split("@")[0];
 
-      const handled = new Set(["/start", "/version", "/binance", "/price"]);
+      const handled = new Set(["/start", "/version", "/binance", "/price", "/macro", "/finnhub"]);
       if (handled.has(command)) {
         if (env.TELEGRAM_WEBHOOK_SECRET) {
           const secret = request.headers.get("x-telegram-bot-api-secret-token");
@@ -52,8 +53,8 @@ export default {
               "• /price BTCUSDT — harga MEXC + Binance\n" +
               "• /binance BTCUSDT — tes Binance\n" +
               "• /mexc — tes MEXC\n" +
-              "• /finnhub — tes kalender makro\n" +
-              "• /macro — event makro AS\n" +
+              "• /finnhub — cek akses Finnhub (opsional)\n" +
+              "• /macro — event makro AS via FRED + You.com, fallback otomatis\n" +
               "• /coinalyze BTC — tes Coinalyze\n" +
               "• /derivatives BTC — OI/funding/liquidation\n" +
               "• /news BTC — berita terbaru\n" +
@@ -66,6 +67,13 @@ export default {
             );
           } else if (command === "/version") {
             await sendTelegram(env, chatId, `✅ Build aktif: <code>${BUILD_VERSION}</code>`);
+          } else if (command === "/finnhub") {
+            const result = await getFinnhubStatusText(env);
+            await sendTelegram(env, chatId, escapeHtml(result));
+          } else if (command === "/macro") {
+            await sendTelegram(env, chatId, "⏳ Mengambil kalender makro dari FRED + You.com...");
+            const result = await getMacroFallbackText(env);
+            await sendTelegram(env, chatId, escapeHtml(result));
           } else if (command === "/binance") {
             const symbol = normalizeSymbol(rawArg || "BTCUSDT");
             const result = await getBinanceTicker(symbol);
@@ -187,7 +195,7 @@ async function sendTelegram(env, chatId, text) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text,
+      text: String(text).slice(0, 4090),
       parse_mode: "HTML",
       disable_web_page_preview: true,
     }),
