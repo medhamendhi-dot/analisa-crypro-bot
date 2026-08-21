@@ -1,5 +1,5 @@
 name = "analisa-crypto-bot"
-main = "src/bingx-demo-trader.js"
+main = "src/bingx-demo-trader-v2.js"
 compatibility_date = "2026-08-21"
 
 [triggers]
