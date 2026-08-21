@@ -1,24 +1,61 @@
 # Analisa Crypto Bot
 
-Cloudflare Worker + Telegram bot untuk membaca market crypto, data makro, derivatives, berita, dan nantinya AI untuk memberi peringatan bullish/bearish.
+Cloudflare Worker + Telegram bot untuk membaca market crypto, derivatives, data makro, berita terbaru, dan menghasilkan analisa probabilistik bullish/bearish dengan xAI.
 
 ## Fitur aktif
 
-- Endpoint health check: `/` dan `/health`
-- Webhook Telegram: `POST /telegram`
-- Helper setup webhook: `GET /setup-webhook`
-- `/start`
-- `/status`
-- `/price BTCUSDT` membandingkan harga MEXC + Binance
-- `/mexc` untuk tes private read-only MEXC API
-- `/binance BTCUSDT` untuk tes Binance Public Market API
-- `/finnhub` untuk tes Finnhub Economic Calendar
-- `/macro` untuk membaca event makro AS penting hari ini + besok
-- `/coinalyze BTC` untuk tes Coinalyze dan memilih market futures perpetual
-- `/derivatives BTC` untuk Open Interest, Funding Rate, liquidations 24 jam, dan long/short ratio
-- Filter event seperti CPI/inflasi, PCE, NFP/payroll, unemployment/jobless, FOMC/Fed, rate decision, GDP, retail sales, PPI, ISM dan JOLTS
-- Data harga publik dari MEXC dan Binance tanpa memerlukan private API key
-- Jika `TELEGRAM_CHAT_ID` diisi, hanya chat tersebut yang dapat memakai bot
+- Telegram webhook: `POST /telegram`
+- Setup webhook: `GET /setup-webhook`
+- AI health check: `GET /ai-health`
+- MEXC + Binance public market data
+- Finnhub Economic Calendar
+- Coinalyze derivatives: Open Interest, funding, liquidation, long/short
+- FRED macro snapshot: CPI YoY, Fed Funds, US 10Y yield
+- You.com Search untuk berita terbaru
+- xAI Responses API untuk menggabungkan semua data menjadi analisa
+
+## Perintah Telegram
+
+```text
+/start
+/status
+/price BTCUSDT
+/mexc
+/binance BTCUSDT
+/finnhub
+/macro
+/coinalyze BTC
+/derivatives BTC
+/xai
+/news BTC
+/fred
+/analyze BTC
+/analisa BTC
+```
+
+`/xai` melakukan tes koneksi xAI.
+
+`/news BTC` mengambil breaking/recent news melalui You.com.
+
+`/fred` menampilkan snapshot makro terbaru dari FRED.
+
+`/analyze BTC` atau `/analisa BTC` menggabungkan:
+
+```text
+MEXC + Binance
+Coinalyze
+Finnhub
+FRED
+You.com
+   ↓
+xAI
+   ↓
+BULLISH / BEARISH / NEUTRAL
+Confidence 0-100%
+Impact + horizon + alasan + risiko
+```
+
+Analisa bersifat probabilistik dan bukan jaminan keuntungan atau nasihat keuangan.
 
 ## Deploy
 
@@ -29,6 +66,8 @@ Deploy command:
 ```bash
 npx wrangler deploy
 ```
+
+Entry point Worker sekarang adalah `src/app.js`; command lama diteruskan ke `src/index.js` sehingga fitur yang sudah ada tetap aktif.
 
 ## Cloudflare Secrets / Variables
 
@@ -45,39 +84,31 @@ MEXC_API_SECRET
 FINNHUB_API_KEY
 COINALYZE_API_KEY
 YOU_API_KEY
-XAI_API_KEY
 FRED_API_KEY
+XAI_API_KEY
 ```
+
+Opsional:
+
+```text
+XAI_MODEL=grok-4.5
+```
+
+Jika `XAI_MODEL` tidak diisi, bot menggunakan `grok-4.5`.
 
 Binance market data yang dipakai bot adalah public API sehingga tidak memerlukan `BINANCE_API_KEY` atau `BINANCE_API_SECRET`.
 
-`COINALYZE_API_KEY` dipakai untuk futures/derivatives. Bot memilih perpetual USDT yang paling sesuai dan memprioritaskan market Binance bila tersedia.
+## Telegram webhook
 
-## Telegram
-
-Setelah deploy, buka sekali:
+Setelah redeploy, webhook Telegram yang sudah mengarah ke `/telegram` tetap dapat digunakan. Jika token/domain/webhook secret berubah, buka sekali:
 
 ```text
 https://<worker-domain>/setup-webhook
 ```
 
-Kemudian tes:
-
-```text
-/start
-/status
-/price BTCUSDT
-/mexc
-/binance BTCUSDT
-/finnhub
-/macro
-/coinalyze BTC
-/derivatives BTC
-```
-
 ## Keamanan
 
-- Jangan aktifkan Withdraw/Transfer/Order Placing pada exchange untuk bot analisa.
-- Semua API key rahasia disimpan sebagai Cloudflare Secret.
-- `TELEGRAM_CHAT_ID` membatasi kontrol bot ke chat yang dikonfigurasi.
-- Bias derivatives adalah sinyal awal berbasis data, bukan prediksi pasti atau nasihat keuangan.
+- Semua secret disimpan di Cloudflare, bukan GitHub.
+- Bot tidak memiliki fungsi withdraw/transfer/order placement.
+- `TELEGRAM_CHAT_ID` membatasi command ke chat yang dikonfigurasi.
+- Input berita diperlakukan sebagai data tidak tepercaya; prompt xAI melarang mengikuti instruksi dari isi berita.
