@@ -1,6 +1,6 @@
 import app from "./kucoin-vercel-one-tap-v2.js";
 
-const BUILD_VERSION = "2026-08-27-kucoin-entry-v3";
+const BUILD_VERSION = "2026-08-27-kucoin-entry-v4-callback-fix";
 
 export default {
   async fetch(request, env, ctx) {
@@ -8,29 +8,8 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/setup-webhook") {
       try {
-        if (!env.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN belum ada di Cloudflare");
-        const webhookUrl = `${url.origin}/telegram`;
-        const payload = {
-          url: webhookUrl,
-          allowed_updates: ["message", "callback_query"],
-          drop_pending_updates: false,
-        };
-        if (env.TELEGRAM_WEBHOOK_SECRET) payload.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
-
-        const response = await telegram(env, "setWebhook", payload);
-        const info = await telegram(env, "getWebhookInfo", {});
-        return json({
-          ok: true,
-          version: BUILD_VERSION,
-          setWebhook: response,
-          webhook: {
-            url: info?.url || "",
-            pendingUpdateCount: info?.pending_update_count || 0,
-            lastErrorDate: info?.last_error_date || null,
-            lastErrorMessage: info?.last_error_message || null,
-            allowedUpdates: info?.allowed_updates || null,
-          },
-        });
+        const result = await ensureTradingWebhook(env, url.origin);
+        return json({ ok: true, version: BUILD_VERSION, ...result });
       } catch (error) {
         return json({ ok: false, version: BUILD_VERSION, error: formatError(error) }, 500);
       }
@@ -42,16 +21,28 @@ export default {
         return json({
           ok: true,
           version: BUILD_VERSION,
-          webhook: {
-            url: info?.url || "",
-            pendingUpdateCount: info?.pending_update_count || 0,
-            lastErrorDate: info?.last_error_date || null,
-            lastErrorMessage: info?.last_error_message || null,
-            allowedUpdates: info?.allowed_updates || null,
-          },
+          webhook: formatWebhookInfo(info),
         });
       } catch (error) {
         return json({ ok: false, version: BUILD_VERSION, error: formatError(error) }, 500);
+      }
+    }
+
+    // Repair Telegram allowed_updates automatically before sending one-tap buttons.
+    // This avoids buttons that render correctly but never deliver callback_query events.
+    if (request.method === "POST" && url.pathname === "/telegram") {
+      try {
+        const clone = request.clone();
+        const update = await clone.json().catch(() => null);
+        const text = String(update?.message?.text || "").trim();
+        const command = text.split(/\s+/)[0]?.toLowerCase().split("@")[0] || "";
+        const tradingCommands = new Set(["/kucointrade", "/kucoincycle", "/kucoinproxy", "/kucoin"]);
+
+        if (tradingCommands.has(command)) {
+          await ensureTradingWebhook(env, url.origin);
+        }
+      } catch (error) {
+        console.error("Webhook auto-repair failed", formatError(error));
       }
     }
 
@@ -62,6 +53,36 @@ export default {
     return app.scheduled(event, env, ctx);
   },
 };
+
+async function ensureTradingWebhook(env, origin) {
+  if (!env.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN belum ada di Cloudflare");
+
+  const webhookUrl = `${origin}/telegram`;
+  const payload = {
+    url: webhookUrl,
+    allowed_updates: ["message", "callback_query"],
+    drop_pending_updates: false,
+  };
+  if (env.TELEGRAM_WEBHOOK_SECRET) payload.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
+
+  const response = await telegram(env, "setWebhook", payload);
+  const info = await telegram(env, "getWebhookInfo", {});
+
+  return {
+    setWebhook: response,
+    webhook: formatWebhookInfo(info),
+  };
+}
+
+function formatWebhookInfo(info) {
+  return {
+    url: info?.url || "",
+    pendingUpdateCount: info?.pending_update_count || 0,
+    lastErrorDate: info?.last_error_date || null,
+    lastErrorMessage: info?.last_error_message || null,
+    allowedUpdates: info?.allowed_updates || null,
+  };
+}
 
 async function telegram(env, method, payload) {
   if (!env.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN belum ada di Cloudflare");
