@@ -1,7 +1,7 @@
 import router from "./router.js";
 import { getKucoinReadOnlyStatus } from "./kucoin-readonly.js";
 
-const BUILD_VERSION = "2026-08-27-kucoin-readonly-v1";
+const BUILD_VERSION = "2026-08-27-kucoin-one-tap-commands-v2";
 
 export default {
   async fetch(request, env, ctx) {
@@ -47,10 +47,10 @@ export default {
         "Command utama:\n" +
         "• /analyzebtc — analisa BTC lengkap\n" +
         "• /newsbtc — berita crypto/BTC terbaru\n" +
-        "• /kucoin — cek koneksi API KuCoin (read-only)\n\n" +
-        "BingX demo trading sudah tidak menjadi entry point Worker.\n" +
-        "Analisa BTC memakai market, derivatives, teknikal Twelve Data, macro, berita, dan xAI.\n\n" +
-        "⚠️ Bot ini tidak menempatkan order otomatis."
+        "• /kucoin — cek koneksi API KuCoin\n" +
+        "• /kucointrade — buat proposal order KuCoin dengan tombol 1-tap\n\n" +
+        "Siklus KuCoin memakai Isolated Margin BTC-USDT. Bot menyiapkan BUY/SELL, tetapi order live hanya dikirim setelah tombol Konfirmasi ditekan di Telegram.\n\n" +
+        "⚠️ Market order dapat terkena fee dan slippage."
       );
       return json({ ok: true });
     }
@@ -59,12 +59,14 @@ export default {
       const status = await getKucoinReadOnlyStatus(env);
       if (status.ok) {
         const permissions = escapeHtml(status.permission || "-");
+        const hasMargin = String(status.permission || "").toLowerCase().includes("margin");
         await sendTelegram(env, chatId,
           "✅ <b>KUCOIN API TERHUBUNG</b>\n\n" +
           `API version: <b>${escapeHtml(String(status.apiVersion || "-"))}</b>\n` +
           `Permission: <b>${permissions}</b>\n` +
+          `Margin permission: <b>${hasMargin ? "✅ ada" : "⚠️ tidak terdeteksi"}</b>\n` +
           `Region: <b>${escapeHtml(String(status.region || "-"))}</b>\n\n` +
-          "Mode bot saat ini: <b>read-only / analisa</b>."
+          "Gunakan /kucointrade untuk membuat proposal order 1-tap."
         );
       } else {
         await sendTelegram(env, chatId,
@@ -92,7 +94,8 @@ export default {
         "Gunakan:\n" +
         "• /analyzebtc untuk analisa BTC\n" +
         "• /newsbtc untuk berita BTC\n" +
-        "• /kucoin untuk cek koneksi KuCoin"
+        "• /kucoin untuk cek koneksi KuCoin\n" +
+        "• /kucointrade untuk proposal order 1-tap"
       );
       return json({ ok: true });
     }
