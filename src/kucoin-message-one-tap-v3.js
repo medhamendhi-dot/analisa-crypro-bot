@@ -1,8 +1,8 @@
 import legacy from "./kucoin-vercel-one-tap-v2.js";
 
-const BUILD_VERSION = "2026-08-27-kucoin-message-one-tap-v3";
+const BUILD_VERSION = "2026-08-27-kucoin-message-one-tap-v3-2min";
 const SYMBOL = "BTC-USDT";
-const FIVE_MINUTES = 5 * 60 * 1000;
+const TWO_MINUTES = 2 * 60 * 1000;
 const PENDING_URL = "https://state.local/kucoin-message-one-tap-v3-pending";
 const STATE_URL = "https://state.local/kucoin-message-one-tap-v3-state";
 const DEFAULT_PROXY_URL = "https://vercel-kucoin-check-lutfula.vercel.app/api/kucoin-proxy-v2";
@@ -55,7 +55,6 @@ export default {
 
   async scheduled(event, env, ctx) {
     try {
-      // Keep non-KuCoin scheduled monitoring from the previous app disabled here to avoid duplicate one-tap proposals.
       ctx.waitUntil(runScheduled(event, env).catch(async (e) => {
         console.error("KuCoin message one-tap cycle error", formatError(e));
       }));
@@ -147,7 +146,6 @@ async function executePending(env, chatId, requestedSide) {
     return;
   }
 
-  // Clear first so repeated taps cannot submit the same proposal twice.
   await clearPending();
   await sendText(env, chatId, "⏳ Mengirim order live ke KuCoin melalui Vercel Singapore...", true);
 
@@ -164,12 +162,12 @@ async function executePending(env, chatId, requestedSide) {
         clientOid, symbol: SYMBOL, side: "buy", type: "market", funds: String(funds),
         isIsolated: true, autoBorrow: false, autoRepay: false,
       });
-      await setState({ lastAction: "BUY", orderId: result?.orderId || null, nextAt: Date.now() + FIVE_MINUTES });
+      await setState({ lastAction: "BUY", orderId: result?.orderId || null, nextAt: Date.now() + TWO_MINUTES });
       await sendText(env, chatId, [
         "✅ <b>KUCOIN BUY TERKIRIM</b>",
         `Dana: <b>${format(funds, 6)} USDT</b>`,
         `Order ID: <code>${escapeHtml(result?.orderId || "-")}</code>`,
-        "Sekitar 5 menit lagi bot menyiapkan SELL.",
+        "Sekitar 2 menit lagi bot menyiapkan SELL.",
       ].join("\n"), true);
     } else {
       const approved = Number(pending.size);
@@ -179,12 +177,12 @@ async function executePending(env, chatId, requestedSide) {
         clientOid, symbol: SYMBOL, side: "sell", type: "market", size: String(size),
         isIsolated: true, autoBorrow: false, autoRepay: false,
       });
-      await setState({ lastAction: "SELL", orderId: result?.orderId || null, nextAt: Date.now() + FIVE_MINUTES });
+      await setState({ lastAction: "SELL", orderId: result?.orderId || null, nextAt: Date.now() + TWO_MINUTES });
       await sendText(env, chatId, [
         "✅ <b>KUCOIN SELL TERKIRIM</b>",
         `Jumlah: <b>${format(size, 8)} BTC</b>`,
         `Order ID: <code>${escapeHtml(result?.orderId || "-")}</code>`,
-        "Sekitar 5 menit lagi bot menyiapkan BUY.",
+        "Sekitar 2 menit lagi bot menyiapkan BUY.",
       ].join("\n"), true);
     }
   } catch (e) {
