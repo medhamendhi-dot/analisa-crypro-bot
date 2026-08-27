@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 
 const KUCOIN_BASE = "https://api.kucoin.com";
 const SYMBOL = "BTC-USDT";
-const BUILD_VERSION = "2026-08-27-kucoin-proxy-v2";
+const BUILD_VERSION = "2026-08-27-kucoin-proxy-v3-recovery";
+const UPSTREAM_TIMEOUT_MS = 12000;
 
 export default async function handler(req, res) {
   res.setHeader("cache-control", "no-store");
@@ -60,10 +61,38 @@ export default async function handler(req, res) {
     return res.status(403).json({ ok: false, error: `Endpoint/parameter tidak diizinkan: ${method} ${endpoint}`, region });
   }
 
+  const cfg = { apiKey, secret, passphraseRaw, apiVersion };
+
   try {
-    const data = await kucoinPrivate({ apiKey, secret, passphraseRaw, apiVersion }, method, endpoint, body);
+    const data = await kucoinPrivate(cfg, method, endpoint, body);
     return res.status(200).json({ ok: true, data, region, version: BUILD_VERSION });
   } catch (error) {
+    // Never blindly retry a live POST order. If the upstream response was ambiguous,
+    // query KuCoin using the same clientOid to see whether the order actually exists.
+    if (method === "POST" && endpoint === "/api/v3/hf/margin/order" && body?.clientOid && isAmbiguousFailure(error)) {
+      try {
+        const verifyEndpoint = `/api/v3/hf/margin/orders/client-order/${encodeURIComponent(body.clientOid)}?symbol=${SYMBOL}`;
+        const found = await kucoinPrivate(cfg, "GET", verifyEndpoint, null);
+        if (found?.id) {
+          return res.status(200).json({
+            ok: true,
+            data: { orderId: found.id, clientOid: body.clientOid, recovered: true },
+            region,
+            version: BUILD_VERSION,
+            recovery: "Order ditemukan via clientOid setelah respons upstream ambigu.",
+          });
+        }
+      } catch (verifyError) {
+        return res.status(502).json({
+          ok: false,
+          error: `Respons order ambigu: ${formatError(error)} | Verifikasi clientOid gagal: ${formatError(verifyError)}`,
+          region,
+          version: BUILD_VERSION,
+          ambiguous: true,
+        });
+      }
+    }
+
     return res.status(502).json({ ok: false, error: formatError(error), region, version: BUILD_VERSION });
   }
 }
@@ -71,11 +100,13 @@ export default async function handler(req, res) {
 function isAllowed(method, endpoint, body) {
   if (method === "GET" && endpoint === "/api/v1/user/api-key") return true;
   if (method === "GET" && endpoint === "/api/v3/isolated/accounts?symbol=BTC-USDT&quoteCurrency=USDT&queryType=ISOLATED") return true;
+  if (method === "GET" && /^\/api\/v3\/hf\/margin\/orders\/client-order\/[A-Za-z0-9_-]+\?symbol=BTC-USDT$/.test(endpoint)) return true;
 
   if (method === "POST" && endpoint === "/api/v3/hf/margin/order") {
     if (!body || body.symbol !== SYMBOL || body.type !== "market" || body.isIsolated !== true) return false;
     if (body.autoBorrow !== false || body.autoRepay !== false) return false;
     if (!["buy", "sell"].includes(String(body.side))) return false;
+    if (typeof body.clientOid !== "string" || !/^[A-Za-z0-9_-]{8,64}$/.test(body.clientOid)) return false;
 
     if (body.side === "buy") {
       return typeof body.funds === "string" && Number(body.funds) > 0 && !("size" in body);
@@ -92,20 +123,32 @@ async function kucoinPrivate(cfg, method, endpoint, bodyObj) {
   const prehash = `${timestamp}${method}${endpoint}${body}`;
   const signature = crypto.createHmac("sha256", cfg.secret).update(prehash).digest("base64");
   const passphrase = crypto.createHmac("sha256", cfg.secret).update(cfg.passphraseRaw).digest("base64");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
-  const response = await fetch(`${KUCOIN_BASE}${endpoint}`, {
-    method,
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "KC-API-KEY": cfg.apiKey,
-      "KC-API-SIGN": signature,
-      "KC-API-TIMESTAMP": timestamp,
-      "KC-API-PASSPHRASE": passphrase,
-      "KC-API-KEY-VERSION": cfg.apiVersion,
-    },
-    body: body || undefined,
-  });
+  let response;
+  try {
+    response = await fetch(`${KUCOIN_BASE}${endpoint}`, {
+      method,
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        "KC-API-KEY": cfg.apiKey,
+        "KC-API-SIGN": signature,
+        "KC-API-TIMESTAMP": timestamp,
+        "KC-API-PASSPHRASE": passphrase,
+        "KC-API-KEY-VERSION": cfg.apiVersion,
+      },
+      body: body || undefined,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const wrapped = new Error(error?.name === "AbortError" ? `KuCoin upstream timeout setelah ${UPSTREAM_TIMEOUT_MS}ms` : `KuCoin fetch gagal: ${formatError(error)}`);
+    wrapped.ambiguous = method === "POST";
+    throw wrapped;
+  } finally {
+    clearTimeout(timer);
+  }
 
   const text = await response.text();
   let payload = {};
@@ -114,9 +157,16 @@ async function kucoinPrivate(cfg, method, endpoint, bodyObj) {
   if (!response.ok || payload?.code !== "200000") {
     const code = payload?.code || `HTTP ${response.status}`;
     const message = payload?.msg || payload?.message || text || "request gagal";
-    throw new Error(`${code}: ${formatError(message)}`);
+    const wrapped = new Error(`${code}: ${formatError(message)}`);
+    wrapped.upstreamStatus = response.status;
+    wrapped.ambiguous = method === "POST" && response.status >= 500;
+    throw wrapped;
   }
   return payload.data;
+}
+
+function isAmbiguousFailure(error) {
+  return Boolean(error?.ambiguous || Number(error?.upstreamStatus || 0) >= 500 || /timeout|fetch gagal|HTTP 5\d\d/i.test(formatError(error)));
 }
 
 function safeEqualHex(a, b) {
