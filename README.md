@@ -6,54 +6,27 @@ Cloudflare Worker + Telegram bot untuk membaca market crypto, derivatives, data 
 
 - Telegram webhook: `POST /telegram`
 - Setup webhook: `GET /setup-webhook`
-- AI health check: `GET /ai-health`
+- Auto monitor setiap 5 menit
 - MEXC + Binance public market data
 - Finnhub Economic Calendar
 - Coinalyze derivatives: Open Interest, funding, liquidation, long/short
 - FRED macro snapshot: CPI YoY, Fed Funds, US 10Y yield
 - You.com Search untuk berita terbaru
 - xAI Responses API untuk menggabungkan semua data menjadi analisa
+- KuCoin private API read-only health check
+
+BingX demo auto-trader tidak lagi menjadi entry point Worker.
 
 ## Perintah Telegram
 
 ```text
 /start
-/status
-/price BTCUSDT
-/mexc
-/binance BTCUSDT
-/finnhub
-/macro
-/coinalyze BTC
-/derivatives BTC
-/xai
-/news BTC
-/fred
-/analyze BTC
-/analisa BTC
+/analyzebtc
+/newsbtc
+/kucoin
 ```
 
-`/xai` melakukan tes koneksi xAI.
-
-`/news BTC` mengambil breaking/recent news melalui You.com.
-
-`/fred` menampilkan snapshot makro terbaru dari FRED.
-
-`/analyze BTC` atau `/analisa BTC` menggabungkan:
-
-```text
-MEXC + Binance
-Coinalyze
-Finnhub
-FRED
-You.com
-   ↓
-xAI
-   ↓
-BULLISH / BEARISH / NEUTRAL
-Confidence 0-100%
-Impact + horizon + alasan + risiko
-```
+`/kucoin` hanya mengecek autentikasi dan permission API KuCoin. Tidak ada endpoint order, withdrawal, transfer, atau auto-trading KuCoin di implementasi ini.
 
 Analisa bersifat probabilistik dan bukan jaminan keuntungan atau nasihat keuangan.
 
@@ -67,7 +40,7 @@ Deploy command:
 npx wrangler deploy
 ```
 
-Entry point Worker sekarang adalah `src/app.js`; command lama diteruskan ke `src/index.js` sehingga fitur yang sudah ada tetap aktif.
+Entry point Worker sekarang adalah `src/auto-monitor.js`.
 
 ## Cloudflare Secrets / Variables
 
@@ -81,22 +54,26 @@ TELEGRAM_WEBHOOK_SECRET
 MEXC_API_KEY
 MEXC_API_SECRET
 
+KUCOIN_API_KEY
+KUCOIN_API_SECRET
+KUCOIN_API_PASSPHRASE
+
 FINNHUB_API_KEY
 COINALYZE_API_KEY
 YOU_API_KEY
 FRED_API_KEY
 XAI_API_KEY
+TWELVEDATA_API_KEY
 ```
 
 Opsional:
 
 ```text
+KUCOIN_API_KEY_VERSION=3
 XAI_MODEL=grok-4.5
 ```
 
-Jika `XAI_MODEL` tidak diisi, bot menggunakan `grok-4.5`.
-
-Binance market data yang dipakai bot adalah public API sehingga tidak memerlukan `BINANCE_API_KEY` atau `BINANCE_API_SECRET`.
+Untuk private REST KuCoin, dokumentasi KuCoin mewajibkan Key, Secret, Passphrase, dan API key version. Jika `KUCOIN_API_KEY_VERSION` tidak diisi, health check mencoba versi 3 lalu 2.
 
 ## Telegram webhook
 
