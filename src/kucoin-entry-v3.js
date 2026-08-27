@@ -1,6 +1,6 @@
-import app from "./kucoin-vercel-one-tap-v2.js";
+import app from "./kucoin-message-one-tap-v3.js";
 
-const BUILD_VERSION = "2026-08-27-kucoin-entry-v4-callback-fix";
+const BUILD_VERSION = "2026-08-27-kucoin-entry-v5-reply-keyboard";
 
 export default {
   async fetch(request, env, ctx) {
@@ -18,18 +18,12 @@ export default {
     if (request.method === "GET" && url.pathname === "/telegram-webhook-status") {
       try {
         const info = await telegram(env, "getWebhookInfo", {});
-        return json({
-          ok: true,
-          version: BUILD_VERSION,
-          webhook: formatWebhookInfo(info),
-        });
+        return json({ ok: true, version: BUILD_VERSION, webhook: formatWebhookInfo(info) });
       } catch (error) {
         return json({ ok: false, version: BUILD_VERSION, error: formatError(error) }, 500);
       }
     }
 
-    // Repair Telegram allowed_updates automatically before sending one-tap buttons.
-    // This avoids buttons that render correctly but never deliver callback_query events.
     if (request.method === "POST" && url.pathname === "/telegram") {
       try {
         const clone = request.clone();
@@ -37,10 +31,7 @@ export default {
         const text = String(update?.message?.text || "").trim();
         const command = text.split(/\s+/)[0]?.toLowerCase().split("@")[0] || "";
         const tradingCommands = new Set(["/kucointrade", "/kucoincycle", "/kucoinproxy", "/kucoin"]);
-
-        if (tradingCommands.has(command)) {
-          await ensureTradingWebhook(env, url.origin);
-        }
+        if (tradingCommands.has(command)) await ensureTradingWebhook(env, url.origin);
       } catch (error) {
         console.error("Webhook auto-repair failed", formatError(error));
       }
@@ -56,22 +47,15 @@ export default {
 
 async function ensureTradingWebhook(env, origin) {
   if (!env.TELEGRAM_BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN belum ada di Cloudflare");
-
-  const webhookUrl = `${origin}/telegram`;
   const payload = {
-    url: webhookUrl,
+    url: `${origin}/telegram`,
     allowed_updates: ["message", "callback_query"],
     drop_pending_updates: false,
   };
   if (env.TELEGRAM_WEBHOOK_SECRET) payload.secret_token = env.TELEGRAM_WEBHOOK_SECRET;
-
   const response = await telegram(env, "setWebhook", payload);
   const info = await telegram(env, "getWebhookInfo", {});
-
-  return {
-    setWebhook: response,
-    webhook: formatWebhookInfo(info),
-  };
+  return { setWebhook: response, webhook: formatWebhookInfo(info) };
 }
 
 function formatWebhookInfo(info) {
@@ -94,9 +78,7 @@ async function telegram(env, method, payload) {
   const text = await response.text();
   let data = {};
   try { data = text ? JSON.parse(text) : {}; } catch {}
-  if (!response.ok || data?.ok === false) {
-    throw new Error(data?.description || `Telegram HTTP ${response.status}: ${text.slice(0, 300)}`);
-  }
+  if (!response.ok || data?.ok === false) throw new Error(data?.description || `Telegram HTTP ${response.status}: ${text.slice(0, 300)}`);
   return data.result;
 }
 
