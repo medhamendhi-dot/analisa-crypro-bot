@@ -1,6 +1,6 @@
-import app from "./kucoin-message-one-tap-v3.js";
+import app from "./kucoin-message-one-tap-v4.js";
 
-const BUILD_VERSION = "2026-08-27-kucoin-entry-v5-reply-keyboard";
+const BUILD_VERSION = "2026-08-27-kucoin-entry-v6-stateless";
 
 export default {
   async fetch(request, env, ctx) {
