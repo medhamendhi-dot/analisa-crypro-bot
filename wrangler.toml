@@ -1,5 +1,5 @@
 name = "analisa-crypto-bot"
-main = "src/kucoin-vercel-one-tap-v2.js"
+main = "src/kucoin-entry-v3.js"
 compatibility_date = "2026-08-21"
 
 [triggers]
