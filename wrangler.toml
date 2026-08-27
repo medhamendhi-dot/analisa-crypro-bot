@@ -1,5 +1,5 @@
 name = "analisa-crypto-bot"
-main = "src/kucoin-one-tap-all.js"
+main = "src/kucoin-safe-wrapper.js"
 compatibility_date = "2026-08-21"
 
 [triggers]
