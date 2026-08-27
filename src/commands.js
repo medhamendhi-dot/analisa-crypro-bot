@@ -1,6 +1,7 @@
 import router from "./router.js";
+import { getKucoinReadOnlyStatus } from "./kucoin-readonly.js";
 
-const BUILD_VERSION = "2026-08-21-botfather-commands-v2";
+const BUILD_VERSION = "2026-08-27-kucoin-readonly-v1";
 
 export default {
   async fetch(request, env, ctx) {
@@ -8,6 +9,11 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/command-version") {
       return json({ ok: true, version: BUILD_VERSION });
+    }
+
+    if (request.method === "GET" && url.pathname === "/kucoin-health") {
+      const status = await getKucoinReadOnlyStatus(env);
+      return json(status, status.ok ? 200 : 503);
     }
 
     if (request.method !== "POST" || url.pathname !== "/telegram") {
@@ -40,10 +46,35 @@ export default {
         "🤖 <b>Analisa Crypto Bot</b>\n\n" +
         "Command utama:\n" +
         "• /analyzebtc — analisa BTC lengkap\n" +
-        "• /newsbtc — berita crypto/BTC terbaru\n\n" +
+        "• /newsbtc — berita crypto/BTC terbaru\n" +
+        "• /kucoin — cek koneksi API KuCoin (read-only)\n\n" +
+        "BingX demo trading sudah tidak menjadi entry point Worker.\n" +
         "Analisa BTC memakai market, derivatives, teknikal Twelve Data, macro, berita, dan xAI.\n\n" +
-        "⚠️ Analisa bukan jaminan keuntungan atau nasihat keuangan."
+        "⚠️ Bot ini tidak menempatkan order otomatis."
       );
+      return json({ ok: true });
+    }
+
+    if (command === "/kucoin") {
+      const status = await getKucoinReadOnlyStatus(env);
+      if (status.ok) {
+        const permissions = escapeHtml(status.permission || "-");
+        await sendTelegram(env, chatId,
+          "✅ <b>KUCOIN API TERHUBUNG</b>\n\n" +
+          `API version: <b>${escapeHtml(String(status.apiVersion || "-"))}</b>\n` +
+          `Permission: <b>${permissions}</b>\n` +
+          `Region: <b>${escapeHtml(String(status.region || "-"))}</b>\n\n` +
+          "Mode bot saat ini: <b>read-only / analisa</b>."
+        );
+      } else {
+        await sendTelegram(env, chatId,
+          "❌ <b>KUCOIN API BELUM TERHUBUNG</b>\n\n" +
+          `${escapeHtml(status.error || "Autentikasi gagal")}\n\n` +
+          `Key: ${status.configured?.key ? "✅" : "❌"}\n` +
+          `Secret: ${status.configured?.secret ? "✅" : "❌"}\n` +
+          `Passphrase: ${status.configured?.passphrase ? "✅" : "❌"}`
+        );
+      }
       return json({ ok: true });
     }
 
@@ -60,7 +91,8 @@ export default {
         "ℹ️ Command lama sudah dinonaktifkan.\n\n" +
         "Gunakan:\n" +
         "• /analyzebtc untuk analisa BTC\n" +
-        "• /newsbtc untuk berita BTC"
+        "• /newsbtc untuk berita BTC\n" +
+        "• /kucoin untuk cek koneksi KuCoin"
       );
       return json({ ok: true });
     }
@@ -104,6 +136,14 @@ async function sendTelegram(env, chatId, text) {
   if (!response.ok) {
     throw new Error(`Telegram HTTP ${response.status}`);
   }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function json(data, status = 200) {
