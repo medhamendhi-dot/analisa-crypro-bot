@@ -2,10 +2,11 @@ import crypto from "node:crypto";
 
 const KUCOIN_BASE = "https://api.kucoin.com";
 const SYMBOL = "BTC-USDT";
-const BUILD_VERSION = "2026-08-27-kucoin-proxy-v4-fast-timeout";
+const BUILD_VERSION = "2026-08-27-kucoin-proxy-v5-fee-buffer";
 const ORDER_TIMEOUT_MS = 4500;
 const READ_TIMEOUT_MS = 4500;
 const VERIFY_TIMEOUT_MS = 2500;
+const BUY_FUNDS_RATIO = 0.995;
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
@@ -32,6 +33,7 @@ export default async function handler(req, res) {
         apiVersion,
       },
       timeouts: { orderMs: ORDER_TIMEOUT_MS, readMs: READ_TIMEOUT_MS, verifyMs: VERIFY_TIMEOUT_MS },
+      buyFundsRatio: BUY_FUNDS_RATIO,
       note: "Health only. No order is sent by GET.",
     });
   }
@@ -68,23 +70,49 @@ export default async function handler(req, res) {
   const cfg = { apiKey, secret, passphraseRaw, apiVersion };
   const primaryTimeout = method === "POST" ? ORDER_TIMEOUT_MS : READ_TIMEOUT_MS;
 
+  // KuCoin reserves handling fees before an order enters the book. For a MARKET BUY,
+  // spending literally 100% of available USDT can be rejected because no balance is
+  // left for the fee. Keep a 0.5% buffer while still using effectively all trial funds.
+  let outboundBody = body;
+  let requestedFunds = null;
+  let submittedFunds = null;
+  if (method === "POST" && endpoint === "/api/v3/hf/margin/order" && body?.side === "buy" && typeof body?.funds === "string") {
+    requestedFunds = Number(body.funds);
+    const adjusted = roundDown(requestedFunds * BUY_FUNDS_RATIO, 6);
+    if (!(adjusted > 0)) {
+      return res.status(400).json({ ok: false, error: "Dana BUY terlalu kecil setelah buffer fee", region, version: BUILD_VERSION });
+    }
+    submittedFunds = adjusted;
+    outboundBody = { ...body, funds: String(adjusted) };
+  }
+
   try {
-    const data = await kucoinPrivate(cfg, method, endpoint, body, primaryTimeout);
-    return res.status(200).json({ ok: true, data, region, version: BUILD_VERSION, durationMs: Date.now() - startedAt });
+    const data = await kucoinPrivate(cfg, method, endpoint, outboundBody, primaryTimeout);
+    return res.status(200).json({
+      ok: true,
+      data,
+      region,
+      version: BUILD_VERSION,
+      durationMs: Date.now() - startedAt,
+      requestedFunds,
+      submittedFunds,
+    });
   } catch (error) {
     // Never blindly retry a live order. For ambiguous failures, query the same clientOid.
-    if (method === "POST" && endpoint === "/api/v3/hf/margin/order" && body?.clientOid && isAmbiguousFailure(error)) {
+    if (method === "POST" && endpoint === "/api/v3/hf/margin/order" && outboundBody?.clientOid && isAmbiguousFailure(error)) {
       try {
-        const verifyEndpoint = `/api/v3/hf/margin/orders/client-order/${encodeURIComponent(body.clientOid)}?symbol=${SYMBOL}`;
+        const verifyEndpoint = `/api/v3/hf/margin/orders/client-order/${encodeURIComponent(outboundBody.clientOid)}?symbol=${SYMBOL}`;
         const found = await kucoinPrivate(cfg, "GET", verifyEndpoint, null, VERIFY_TIMEOUT_MS);
         if (found?.id) {
           return res.status(200).json({
             ok: true,
-            data: { orderId: found.id, clientOid: body.clientOid, recovered: true },
+            data: { orderId: found.id, clientOid: outboundBody.clientOid, recovered: true },
             region,
             version: BUILD_VERSION,
             durationMs: Date.now() - startedAt,
             recovery: "Order ditemukan via clientOid setelah respons upstream ambigu.",
+            requestedFunds,
+            submittedFunds,
           });
         }
       } catch (verifyError) {
@@ -95,7 +123,9 @@ export default async function handler(req, res) {
           version: BUILD_VERSION,
           durationMs: Date.now() - startedAt,
           ambiguous: true,
-          clientOid: body.clientOid,
+          clientOid: outboundBody.clientOid,
+          requestedFunds,
+          submittedFunds,
         });
       }
     }
@@ -108,6 +138,8 @@ export default async function handler(req, res) {
       durationMs: Date.now() - startedAt,
       upstreamStatus: Number(error?.upstreamStatus || 0) || null,
       ambiguous: Boolean(error?.ambiguous),
+      requestedFunds,
+      submittedFunds,
     });
   }
 }
@@ -148,7 +180,7 @@ async function kucoinPrivate(cfg, method, endpoint, bodyObj, timeoutMs) {
       headers: {
         accept: "application/json",
         "content-type": "application/json",
-        "user-agent": "kucoin-vercel-proxy/4",
+        "user-agent": "kucoin-vercel-proxy/5",
         "KC-API-KEY": cfg.apiKey,
         "KC-API-SIGN": signature,
         "KC-API-TIMESTAMP": timestamp,
@@ -192,6 +224,11 @@ function safeEqualHex(a, b) {
   } catch {
     return false;
   }
+}
+
+function roundDown(value, decimals) {
+  const f = 10 ** decimals;
+  return Math.floor(Number(value) * f + 1e-12) / f;
 }
 
 function formatError(value) {
