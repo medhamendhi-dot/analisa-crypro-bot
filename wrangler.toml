@@ -1,9 +1,8 @@
 name = "analisa-crypto-bot"
-main = "src/kucoin-entry-v4.js"
+main = "src/app.js"
 compatibility_date = "2026-08-21"
 
-[triggers]
-crons = ["*/2 * * * *"]
+# Trading automation disabled: no scheduled trigger.
 
 [observability]
 enabled = true
