@@ -2,11 +2,12 @@ import crypto from "node:crypto";
 
 const KUCOIN_BASE = "https://api.kucoin.com";
 const SYMBOL = "BTC-USDT";
-const BUILD_VERSION = "2026-08-27-kucoin-proxy-v5-fee-buffer";
+const BUILD_VERSION = "2026-08-28-kucoin-margin-disabled";
 const ORDER_TIMEOUT_MS = 4500;
 const READ_TIMEOUT_MS = 4500;
 const VERIFY_TIMEOUT_MS = 2500;
 const BUY_FUNDS_RATIO = 0.995;
+const MARGIN_TRADING_ENABLED = false;
 
 export default async function handler(req, res) {
   const startedAt = Date.now();
@@ -32,14 +33,34 @@ export default async function handler(req, res) {
         proxySecret: Boolean(proxySecret),
         apiVersion,
       },
+      trading: {
+        marginEnabled: MARGIN_TRADING_ENABLED,
+        orderCreation: "DISABLED",
+      },
       timeouts: { orderMs: ORDER_TIMEOUT_MS, readMs: READ_TIMEOUT_MS, verifyMs: VERIFY_TIMEOUT_MS },
       buyFundsRatio: BUY_FUNDS_RATIO,
-      note: "Health only. No order is sent by GET.",
+      note: "Health only. Margin orders are disabled. No order is sent by GET.",
     });
   }
 
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, error: "Method not allowed", region });
+  }
+
+  // Emergency kill switch: do not allow this proxy to create any isolated-margin order.
+  // This check happens before credentials/signature validation so every POST order attempt
+  // is rejected immediately and cannot reach KuCoin.
+  const requestedMethod = String(req.body?.method || "").toUpperCase();
+  const requestedEndpoint = String(req.body?.endpoint || "");
+  if (requestedMethod === "POST" && requestedEndpoint === "/api/v3/hf/margin/order") {
+    return res.status(403).json({
+      ok: false,
+      error: "KUCOIN MARGIN TRADING DINONAKTIFKAN. Tidak ada order margin yang akan dikirim.",
+      code: "MARGIN_TRADING_DISABLED",
+      region,
+      version: BUILD_VERSION,
+      durationMs: Date.now() - startedAt,
+    });
   }
 
   if (!apiKey || !secret || !passphraseRaw || !proxySecret) {
@@ -70,9 +91,6 @@ export default async function handler(req, res) {
   const cfg = { apiKey, secret, passphraseRaw, apiVersion };
   const primaryTimeout = method === "POST" ? ORDER_TIMEOUT_MS : READ_TIMEOUT_MS;
 
-  // KuCoin reserves handling fees before an order enters the book. For a MARKET BUY,
-  // spending literally 100% of available USDT can be rejected because no balance is
-  // left for the fee. Keep a 0.5% buffer while still using effectively all trial funds.
   let outboundBody = body;
   let requestedFunds = null;
   let submittedFunds = null;
@@ -98,7 +116,6 @@ export default async function handler(req, res) {
       submittedFunds,
     });
   } catch (error) {
-    // Never blindly retry a live order. For ambiguous failures, query the same clientOid.
     if (method === "POST" && endpoint === "/api/v3/hf/margin/order" && outboundBody?.clientOid && isAmbiguousFailure(error)) {
       try {
         const verifyEndpoint = `/api/v3/hf/margin/orders/client-order/${encodeURIComponent(outboundBody.clientOid)}?symbol=${SYMBOL}`;
@@ -150,6 +167,7 @@ function isAllowed(method, endpoint, body) {
   if (method === "GET" && /^\/api\/v3\/hf\/margin\/orders\/client-order\/[A-Za-z0-9_-]+\?symbol=BTC-USDT$/.test(endpoint)) return true;
 
   if (method === "POST" && endpoint === "/api/v3/hf/margin/order") {
+    if (!MARGIN_TRADING_ENABLED) return false;
     if (!body || body.symbol !== SYMBOL || body.type !== "market" || body.isIsolated !== true) return false;
     if (body.autoBorrow !== false || body.autoRepay !== false) return false;
     if (!["buy", "sell"].includes(String(body.side))) return false;
